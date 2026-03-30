@@ -2,16 +2,35 @@ CC ?= cc
 CFLAGS ?= -O2 -Wall -Wextra -std=c11
 LDFLAGS ?=
 LIBS := $(shell pkg-config --libs glfw3 glew opengl) -lm
+VULKAN_LIBS := $(shell pkg-config --libs glfw3 vulkan) -lm
+GLSLC ?= glslc
 
 TARGET := solar_system_modern
 SRC := solar_system_modern.c
+VULKAN_TARGET := solar_system_vulkan
+VULKAN_SRC := solar_system_vulkan.c
+VULKAN_SHADERS := \
+	shaders/vulkan_planet.vert.spv \
+	shaders/vulkan_planet.frag.spv \
+	shaders/vulkan_orbit.vert.spv \
+	shaders/vulkan_orbit.frag.spv \
+	shaders/vulkan_ring.vert.spv \
+	shaders/vulkan_ring.frag.spv \
+	shaders/vulkan_star.vert.spv \
+	shaders/vulkan_star.frag.spv
 
 .PHONY: all clean
 
-all: $(TARGET)
+all: $(TARGET) $(VULKAN_TARGET)
 
 $(TARGET): $(SRC)
 	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS) $(LIBS)
 
+$(VULKAN_TARGET): $(VULKAN_SRC) $(VULKAN_SHADERS)
+	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS) $(VULKAN_LIBS)
+
+shaders/%.spv: shaders/%
+	$(GLSLC) $< -o $@
+
 clean:
-	rm -f $(TARGET)
+	rm -f $(TARGET) $(VULKAN_TARGET) $(VULKAN_SHADERS)

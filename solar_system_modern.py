@@ -244,10 +244,10 @@ def create_orbit_line(radius, segments=120):
         positions.append([radius * math.cos(theta), 0.0, radius * math.sin(theta)])
     return np.array(positions, dtype=np.float32)
 
-def generate_stars(count, radius=150.0):
+def generate_stars(count, radius=220.0):
     positions = []
     brightness = []
-    random.seed(42)
+    random.seed(7)
     for _ in range(count):
         theta = random.uniform(0, 2 * math.pi)
         phi = random.uniform(-math.pi / 2, math.pi / 2)
@@ -446,7 +446,7 @@ class Planet:
     def update(self, dt, speed):
         if self.period > 0:
             angular_speed = 360.0 / (self.period * 60.0)
-            self.angle = (self.angle + angular_speed * speed) % 360.0
+            self.angle = (self.angle + angular_speed * dt * speed) % 360.0
 
         if abs(self.rotation_period_days) > 1e-6:
             rotation_speed = 360.0 / (self.rotation_period_days * self.ROTATION_TIME_SCALE_DAYS_PER_SECOND)
@@ -474,6 +474,7 @@ class SolarSystem:
     TEXTURE_DIR = Path(__file__).resolve().parent / "assets" / "textures"
 
     def __init__(self):
+        random.seed(42)
         self.planets = [
             Planet("Mercury",  4.0,  0.15, (0.7, 0.7, 0.7),  0.24,
                    axial_tilt_deg=0.03, rotation_period_days=58.65),
@@ -509,7 +510,7 @@ class SolarSystem:
 
     def _init_meshes(self):
         # Sphere mesh for planets
-        pos, norm, tex, idx = create_sphere_mesh(1.0, 32, 24)
+        pos, norm, tex, idx = create_sphere_mesh(1.0, 40, 28)
         self.sphere_mesh = Mesh()
         self.sphere_mesh.primitive = GL_TRIANGLES
         self.sphere_mesh.set_vertex_buffer(0, pos, 3)
@@ -518,7 +519,7 @@ class SolarSystem:
         self.sphere_mesh.set_index_buffer(idx)
 
         # Sun sphere (higher quality)
-        pos, norm, tex, idx = create_sphere_mesh(1.0, 40, 32)
+        pos, norm, tex, idx = create_sphere_mesh(1.0, 40, 28)
         self.sun_mesh = Mesh()
         self.sun_mesh.primitive = GL_TRIANGLES
         self.sun_mesh.set_vertex_buffer(0, pos, 3)
@@ -527,7 +528,7 @@ class SolarSystem:
         self.sun_mesh.set_index_buffer(idx)
 
         # Ring mesh
-        pos, norm, tex, idx = create_ring_mesh(1.0, 1.6, 64)
+        pos, norm, tex, idx = create_ring_mesh(1.0, 1.6, 96)
         self.ring_mesh = Mesh()
         self.ring_mesh.primitive = GL_TRIANGLES
         self.ring_mesh.set_vertex_buffer(0, pos, 3)
@@ -536,7 +537,7 @@ class SolarSystem:
         self.ring_mesh.set_index_buffer(idx)
 
         # Stars
-        self.star_positions, self.star_brightness = generate_stars(1000)
+        self.star_positions, self.star_brightness = generate_stars(1800)
         self.star_mesh = Mesh()
         self.star_mesh.primitive = GL_POINTS
         self.star_mesh.vertex_count = len(self.star_positions)
@@ -546,7 +547,7 @@ class SolarSystem:
         # Orbit lines
         self.orbit_meshes = []
         for p in self.planets:
-            orbit_pos = create_orbit_line(p.orbit_radius, 120)
+            orbit_pos = create_orbit_line(p.orbit_radius, 128)
             mesh = Mesh()
             mesh.primitive = GL_LINE_STRIP
             mesh.vertex_count = len(orbit_pos)

@@ -741,7 +741,7 @@ static void generate_stars(int count, float radius, Mesh *mesh) {
     float *positions = (float *) malloc((size_t) count * 3 * sizeof(float));
     float *brightness = (float *) malloc((size_t) count * sizeof(float));
     int p = 0;
-    srand(42);
+    srand(7);
     for (int i = 0; i < count; ++i) {
         float theta = randf_range(0.0f, 2.0f * (float) M_PI);
         float phi = randf_range(-(float) M_PI / 2.0f, (float) M_PI / 2.0f);
@@ -897,7 +897,7 @@ static Mat4 planet_model_matrix(const Planet *planet) {
 
 static void solar_system_init(SolarSystem *ss) {
     memset(ss, 0, sizeof(*ss));
-    srand((unsigned) time(NULL));
+    srand(42);
 
     planet_init(&ss->planets[0], "Mercury", 4.0f, 0.15f, vec3(0.7f, 0.7f, 0.7f), 0.24f, 0.03f, 58.65f, false, vec3(1.0f, 1.0f, 1.0f), 0.0f, 0.0f, "mercury.jpg");
     planet_init(&ss->planets[1], "Venus", 6.0f, 0.30f, vec3(0.9f, 0.7f, 0.3f), 0.62f, 177.36f, -243.02f, false, vec3(1.0f, 1.0f, 1.0f), 0.0f, 0.0f, "venus.jpg");
@@ -913,12 +913,12 @@ static void solar_system_init(SolarSystem *ss) {
     ss->sun_rotation_period_days = 24.47f;
     ss->sun_rotation_angle_deg = randf_range(0.0f, 360.0f);
 
-    create_sphere_mesh(1.0f, 32, 24, &ss->sphere_mesh);
-    create_sphere_mesh(1.0f, 40, 32, &ss->sun_mesh);
-    create_ring_mesh(1.0f, 1.6f, 64, &ss->ring_mesh);
-    generate_stars(1000, 150.0f, &ss->star_mesh);
+    create_sphere_mesh(1.0f, 40, 28, &ss->sphere_mesh);
+    create_sphere_mesh(1.0f, 40, 28, &ss->sun_mesh);
+    create_ring_mesh(1.0f, 1.6f, 96, &ss->ring_mesh);
+    generate_stars(1800, 220.0f, &ss->star_mesh);
     for (size_t i = 0; i < ARRAY_LEN(ss->planets); ++i) {
-        create_orbit_line(ss->planets[i].orbit_radius, 120, &ss->orbit_meshes[i]);
+        create_orbit_line(ss->planets[i].orbit_radius, 128, &ss->orbit_meshes[i]);
     }
 
     char texture_dir[MAX_PATH_LEN];
@@ -943,7 +943,7 @@ static void solar_system_update(SolarSystem *ss, float dt, float speed) {
         Planet *p = &ss->planets[i];
         if (p->period_years > 0.0f) {
             float angular_speed = 360.0f / (p->period_years * 60.0f);
-            p->angle_deg = fmodf(p->angle_deg + angular_speed * speed, 360.0f);
+            p->angle_deg = fmodf(p->angle_deg + angular_speed * dt * speed, 360.0f);
         }
         if (fabsf(p->rotation_period_days) > 1e-6f) {
             float rotation_speed = 360.0f / (p->rotation_period_days * rotation_time_scale);
