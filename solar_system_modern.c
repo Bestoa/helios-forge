@@ -528,7 +528,7 @@ static void mesh_draw(const Mesh *mesh) {
     glBindVertexArray(0);
 }
 
-static GLuint load_texture_2d(const char *path, bool wrap_repeat) {
+static GLuint load_texture_2d(const char *path, bool wrap_repeat, bool srgb) {
     int width = 0;
     int height = 0;
     int channels = 0;
@@ -547,7 +547,17 @@ static GLuint load_texture_2d(const char *path, bool wrap_repeat) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap_repeat ? GL_REPEAT : GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap_repeat ? GL_REPEAT : GL_CLAMP_TO_EDGE);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+    glTexImage2D(
+        GL_TEXTURE_2D,
+        0,
+        srgb ? GL_SRGB8_ALPHA8 : GL_RGBA8,
+        width,
+        height,
+        0,
+        GL_RGBA,
+        GL_UNSIGNED_BYTE,
+        pixels
+    );
     glGenerateMipmap(GL_TEXTURE_2D);
     glBindTexture(GL_TEXTURE_2D, 0);
 
@@ -613,7 +623,7 @@ static void create_sphere_mesh(float radius, int slices, int stacks, Mesh *mesh)
             positions[v] = radius * z;
             normals[v++] = z;
 
-            texcoords[t++] = (float) j / (float) slices;
+            texcoords[t++] = 1.0f - (float) j / (float) slices;
             texcoords[t++] = 1.0f - (float) i / (float) stacks;
         }
     }
@@ -926,15 +936,15 @@ static void solar_system_init(SolarSystem *ss) {
     for (size_t i = 0; i < ARRAY_LEN(ss->planets); ++i) {
         char texture_path[MAX_PATH_LEN];
         join_path(texture_path, sizeof(texture_path), texture_dir, ss->planets[i].texture_name);
-        ss->planets[i].texture = load_texture_2d(texture_path, true);
+        ss->planets[i].texture = load_texture_2d(texture_path, true, true);
     }
 
     char sun_path[MAX_PATH_LEN];
     join_path(sun_path, sizeof(sun_path), texture_dir, "sun.jpg");
-    ss->sun_texture = load_texture_2d(sun_path, true);
+    ss->sun_texture = load_texture_2d(sun_path, true, true);
     char ring_alpha_path[MAX_PATH_LEN];
     join_path(ring_alpha_path, sizeof(ring_alpha_path), texture_dir, "saturn_ring_alpha.png");
-    ss->ring_alpha_texture = load_texture_2d(ring_alpha_path, false);
+    ss->ring_alpha_texture = load_texture_2d(ring_alpha_path, false, false);
 }
 
 static void solar_system_update(SolarSystem *ss, float dt, float speed) {
@@ -1039,12 +1049,13 @@ int main(int argc, char **argv) {
     printf("GLSL Version: %s\n", glGetString(GL_SHADING_LANGUAGE_VERSION));
 
     glViewport(0, 0, WINDOW_WIDTH, WINDOW_HEIGHT);
-    glClearColor(0.0f, 0.0f, 0.02f, 1.0f);
+    glClearColor(0.0f, 0.0f, 0.01f, 1.0f);
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
     glFrontFace(GL_CCW);
     glEnable(GL_PROGRAM_POINT_SIZE);
+    glEnable(GL_FRAMEBUFFER_SRGB);
 
     Shader planet_shader = load_shader_program("planet.vert", "planet.frag");
     Shader ring_shader = load_shader_program("ring.vert", "ring.frag");
@@ -1060,7 +1071,7 @@ int main(int argc, char **argv) {
     solar_system_init(&solar_system);
 
     Vec3 light_pos = vec3(0.0f, 0.0f, 0.0f);
-    Vec3 light_ambient = vec3(0.04f, 0.04f, 0.05f);
+    Vec3 light_ambient = vec3(0.02f, 0.02f, 0.02f);
     Vec3 light_diffuse = vec3(1.34f, 1.26f, 1.16f);
     Vec3 light_specular = vec3(0.32f, 0.32f, 0.32f);
     Mat4 projection = mat4_perspective(45.0f, (float) WINDOW_WIDTH / (float) WINDOW_HEIGHT, 0.5f, 500.0f);

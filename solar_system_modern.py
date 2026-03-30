@@ -183,7 +183,7 @@ def create_sphere_mesh(radius, slices, stacks):
 
             positions.append([radius * x, radius * y, radius * z])
             normals.append([x, y, z])
-            texcoords.append([float(j) / slices, 1.0 - float(i) / stacks])
+            texcoords.append([1.0 - float(j) / slices, 1.0 - float(i) / stacks])
 
     for i in range(stacks):
         for j in range(slices):
@@ -260,7 +260,7 @@ def generate_stars(count, radius=220.0):
     return np.array(positions, dtype=np.float32), np.array(brightness, dtype=np.float32)
 
 
-def load_texture(path, wrap_repeat=True):
+def load_texture(path, wrap_repeat=True, srgb=True):
     surface = pygame.image.load(str(path)).convert_alpha()
     texture_data = pygame.image.tostring(surface, "RGBA", True)
     width, height = surface.get_size()
@@ -272,7 +272,17 @@ def load_texture(path, wrap_repeat=True):
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT if wrap_repeat else GL_CLAMP_TO_EDGE)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT if wrap_repeat else GL_CLAMP_TO_EDGE)
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, texture_data)
+    glTexImage2D(
+        GL_TEXTURE_2D,
+        0,
+        GL_SRGB8_ALPHA8 if srgb else GL_RGBA8,
+        width,
+        height,
+        0,
+        GL_RGBA,
+        GL_UNSIGNED_BYTE,
+        texture_data,
+    )
     glGenerateMipmap(GL_TEXTURE_2D)
     glBindTexture(GL_TEXTURE_2D, 0)
     return texture_id
@@ -557,15 +567,15 @@ class SolarSystem:
     def _load_textures(self):
         for p in self.planets:
             texture_path = self.TEXTURE_DIR / p.texture_name
-            p.texture = load_texture(texture_path) if texture_path.exists() else None
+            p.texture = load_texture(texture_path, srgb=True) if texture_path.exists() else None
 
         sun_path = self.TEXTURE_DIR / "sun.jpg"
         if sun_path.exists():
-            self.sun_texture = load_texture(sun_path)
+            self.sun_texture = load_texture(sun_path, srgb=True)
 
         ring_alpha_path = self.TEXTURE_DIR / "saturn_ring_alpha.png"
         if ring_alpha_path.exists():
-            self.ring_alpha_texture = load_texture(ring_alpha_path, wrap_repeat=False)
+            self.ring_alpha_texture = load_texture(ring_alpha_path, wrap_repeat=False, srgb=False)
 
     def update(self, dt, speed):
         for p in self.planets:
@@ -616,7 +626,7 @@ class HUD:
         glBindTexture(GL_TEXTURE_2D, self.texture)
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
         glTexImage2D(
-            GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0,
+            GL_TEXTURE_2D, 0, GL_SRGB8_ALPHA8, width, height, 0,
             GL_RGBA, GL_UNSIGNED_BYTE, data
         )
         glBindTexture(GL_TEXTURE_2D, 0)
@@ -725,12 +735,13 @@ def main():
     print(f"VSync: {'enabled' if vsync_enabled else 'unavailable'}")
 
     # Setup OpenGL state
-    glClearColor(0.0, 0.0, 0.02, 1.0)
+    glClearColor(0.0, 0.0, 0.01, 1.0)
     glEnable(GL_DEPTH_TEST)
     glEnable(GL_CULL_FACE)
     glCullFace(GL_BACK)
     glFrontFace(GL_CCW)
     glEnable(GL_PROGRAM_POINT_SIZE)
+    glEnable(GL_FRAMEBUFFER_SRGB)
 
     # Create shaders
     planet_shader = Shader.from_files("planet.vert", "planet.frag")
@@ -746,7 +757,7 @@ def main():
 
     # Light settings
     light_pos = np.array([0.0, 0.0, 0.0], dtype=np.float32)
-    light_ambient = np.array([0.04, 0.04, 0.05], dtype=np.float32)
+    light_ambient = np.array([0.02, 0.02, 0.02], dtype=np.float32)
     light_diffuse = np.array([1.34, 1.26, 1.16], dtype=np.float32)
     light_specular = np.array([0.32, 0.32, 0.32], dtype=np.float32)
 

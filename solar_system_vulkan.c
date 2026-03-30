@@ -427,8 +427,8 @@ static void geometry_create_sphere(Geometry *geometry, float radius, int slices,
             geometry->vertices[v].normal[0] = x;
             geometry->vertices[v].normal[1] = y;
             geometry->vertices[v].normal[2] = z;
-            geometry->vertices[v].uv[0] = (float) j / (float) slices;
-            geometry->vertices[v].uv[1] = 1.0f - (float) i / (float) stacks;
+            geometry->vertices[v].uv[0] = 1.0f - (float) j / (float) slices;
+            geometry->vertices[v].uv[1] = (float) i / (float) stacks;
             ++v;
         }
     }
@@ -939,6 +939,12 @@ static void upload_geometry(VulkanApp *app, Geometry *geometry) {
 static VkSurfaceFormatKHR choose_swap_surface_format(const SwapchainSupportDetails *support) {
     for (uint32_t i = 0; i < support->format_count; ++i) {
         if (support->formats[i].format == VK_FORMAT_B8G8R8A8_SRGB &&
+            support->formats[i].colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+            return support->formats[i];
+        }
+    }
+    for (uint32_t i = 0; i < support->format_count; ++i) {
+        if (support->formats[i].format == VK_FORMAT_R8G8B8A8_SRGB &&
             support->formats[i].colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
             return support->formats[i];
         }
@@ -1907,7 +1913,7 @@ static void record_command_buffer(VulkanApp *app, VkCommandBuffer cmd, uint32_t 
     vk_check(vkBeginCommandBuffer(cmd, &begin_info), "vkBeginCommandBuffer");
 
     VkClearValue clears[2];
-    clears[0].color = (VkClearColorValue) {{0.0f, 0.0f, 0.0f, 1.0f}};
+    clears[0].color = (VkClearColorValue) {{0.0f, 0.0f, 0.01f, 1.0f}};
     clears[1].depthStencil = (VkClearDepthStencilValue) {1.0f, 0};
 
     VkRenderPassBeginInfo pass_info = {
@@ -2103,9 +2109,9 @@ static void update_uniform_buffer(VulkanApp *app, const Camera *camera) {
     ubo.camera_pos[1] = camera->eye.y;
     ubo.camera_pos[2] = camera->eye.z;
     ubo.camera_pos[3] = 1.0f;
-    ubo.light_ambient[0] = 0.04f;
-    ubo.light_ambient[1] = 0.04f;
-    ubo.light_ambient[2] = 0.05f;
+    ubo.light_ambient[0] = 0.02f;
+    ubo.light_ambient[1] = 0.02f;
+    ubo.light_ambient[2] = 0.02f;
     ubo.light_ambient[3] = 0.0f;
     ubo.light_diffuse[0] = 1.34f;
     ubo.light_diffuse[1] = 1.26f;
