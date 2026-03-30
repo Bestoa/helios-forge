@@ -364,18 +364,15 @@ class Camera:
         self.up = np.array([0.0, 1.0, 0.0], dtype=np.float32)
         self._update_view()
 
-    def _update_view(self):
+    def _set_forward(self, forward):
         world_up = np.array([0.0, 1.0, 0.0], dtype=np.float32)
-        pitch_rad = math.radians(self.pitch)
-        yaw_rad = math.radians(self.yaw)
-        forward = np.array([
-            math.cos(pitch_rad) * math.cos(yaw_rad),
-            math.sin(pitch_rad),
-            math.cos(pitch_rad) * math.sin(yaw_rad),
-        ], dtype=np.float32)
         forward_norm = np.linalg.norm(forward)
-        if forward_norm > 0.0:
-            self.forward = (forward / forward_norm).astype(np.float32)
+        if forward_norm <= 1e-6:
+            return
+
+        self.forward = (forward / forward_norm).astype(np.float32)
+        self.yaw = math.degrees(math.atan2(self.forward[2], self.forward[0]))
+        self.pitch = math.degrees(math.asin(max(-1.0, min(1.0, float(self.forward[1])))))
 
         right = np.cross(self.forward, world_up)
         right_norm = np.linalg.norm(right)
@@ -393,8 +390,21 @@ class Camera:
 
         self.view_matrix = mat4_look_at(self.eye, self.eye + self.forward, self.up)
 
+    def _update_view(self):
+        pitch_rad = math.radians(self.pitch)
+        yaw_rad = math.radians(self.yaw)
+        forward = np.array([
+            math.cos(pitch_rad) * math.cos(yaw_rad),
+            math.sin(pitch_rad),
+            math.cos(pitch_rad) * math.sin(yaw_rad),
+        ], dtype=np.float32)
+        self._set_forward(forward)
+
     def get_view_matrix(self):
         return self.view_matrix
+
+    def look_at(self, target):
+        self._set_forward(np.array(target, dtype=np.float32) - self.eye)
 
     def move(self, forward_amount, right_amount, dt):
         movement = self.forward * forward_amount + self.right * right_amount
@@ -583,6 +593,20 @@ class SolarSystem:
         sun_rotation_speed = 360.0 / (self.sun_rotation_period_days * Planet.ROTATION_TIME_SCALE_DAYS_PER_SECOND)
         self.sun_rotation_angle = (self.sun_rotation_angle + sun_rotation_speed * dt * speed) % 360.0
 
+    def get_target_position(self, target_index):
+        if target_index == 0:
+            return np.array([0.0, 0.0, 0.0], dtype=np.float32)
+        if 1 <= target_index <= len(self.planets):
+            return self.planets[target_index - 1].get_position()
+        return None
+
+    def get_target_name(self, target_index):
+        if target_index == 0:
+            return "Sun"
+        if 1 <= target_index <= len(self.planets):
+            return self.planets[target_index - 1].name
+        return "None"
+
 # ============================================================================
 # HUD
 # ============================================================================
@@ -646,10 +670,11 @@ class HUD:
         glBindBuffer(GL_ARRAY_BUFFER, self.quad_mesh.vbos[0])
         glBufferData(GL_ARRAY_BUFFER, positions.nbytes, positions, GL_DYNAMIC_DRAW)
 
-    def render(self, shader, speed, paused, fps):
+    def render(self, shader, speed, paused, fps, camera_locked, target_name):
         lines = [
             f"FPS: {fps:.1f}  Speed: {speed:.1f}x" + ("  [PAUSED]" if paused else ""),
-            "Mouse: rotate  Scroll: zoom  WASD: move  +/-: speed  Space: pause  Esc: quit",
+            f"Camera: {'LOCKED' if camera_locked else 'FREE'}  Target: {target_name}",
+            "Mouse: rotate  Scroll: zoom  WASD: move  L: lock target  0: Sun  1-8: planets  +/-: speed  Space: pause  Esc: quit",
         ]
         line_h = self.font.get_linesize()
         text_w = max(self.font.size(line)[0] for line in lines)
@@ -772,6 +797,8 @@ def main():
     clock = pygame.time.Clock()
     speed = 1.0
     paused = False
+    camera_locked = False
+    target_index = 0
     frame_count = 0
 
     while True:
@@ -787,6 +814,13 @@ def main():
                     sys.exit()
                 elif event.key == K_SPACE:
                     paused = not paused
+                elif event.key == K_l:
+                    camera_locked = not camera_locked
+                    camera.dragging = False
+                elif event.key == K_0:
+                    target_index = 0
+                elif K_1 <= event.key <= K_8:
+                    target_index = event.key - K_0
                 elif event.key in (K_PLUS, K_EQUALS, K_KP_PLUS):
                     speed = min(50.0, speed + 0.5)
                 elif event.key in (K_MINUS, K_KP_MINUS):
@@ -801,6 +835,10 @@ def main():
 
         if not paused:
             solar_system.update(dt, speed)
+        if camera_locked:
+            target_pos = solar_system.get_target_position(target_index)
+            if target_pos is not None:
+                camera.look_at(target_pos)
 
         # Clear
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
@@ -920,7 +958,14 @@ def main():
 
         # --- Draw HUD ---
         hud_shader.use()
-        hud.render(hud_shader, speed, paused, clock.get_fps())
+        hud.render(
+            hud_shader,
+            speed,
+            paused,
+            clock.get_fps(),
+            camera_locked,
+            solar_system.get_target_name(target_index),
+        )
 
         pygame.display.flip()
         frame_count += 1

@@ -604,6 +604,29 @@ static void camera_update_view(Camera *camera) {
     camera->view_matrix = mat4_look_at(camera->eye, vec3_add(camera->eye, camera->forward), camera->up);
 }
 
+static void camera_set_forward(Camera *camera, Vec3 forward) {
+    Vec3 world_up = vec3(0.0f, 1.0f, 0.0f);
+    if (vec3_length(forward) < 1e-6f) {
+        return;
+    }
+    camera->forward = vec3_normalize(forward);
+    camera->yaw_deg = atan2f(camera->forward.z, camera->forward.x) * 180.0f / (float) M_PI;
+    camera->pitch_deg = asinf(fmaxf(-1.0f, fminf(1.0f, camera->forward.y))) * 180.0f / (float) M_PI;
+    camera->right = vec3_normalize(vec3_cross(camera->forward, world_up));
+    if (vec3_length(camera->right) < 1e-6f) {
+        camera->right = vec3(1.0f, 0.0f, 0.0f);
+    }
+    camera->up = vec3_normalize(vec3_cross(camera->right, camera->forward));
+    if (vec3_length(camera->up) < 1e-6f) {
+        camera->up = world_up;
+    }
+    camera->view_matrix = mat4_look_at(camera->eye, vec3_add(camera->eye, camera->forward), camera->up);
+}
+
+static void camera_look_at_target(Camera *camera, Vec3 target) {
+    camera_set_forward(camera, vec3_sub(target, camera->eye));
+}
+
 static void camera_init(Camera *camera) {
     memset(camera, 0, sizeof(*camera));
     camera->move_speed = 24.0f;
@@ -678,17 +701,39 @@ static void framebuffer_resize_callback(GLFWwindow *window, int width, int heigh
     }
 }
 
-static void update_window_title(GLFWwindow *window, float fps, float speed, bool paused) {
+static void update_window_title(GLFWwindow *window, float fps, float speed, bool paused, bool camera_locked, const char *focus_name) {
     char title[256];
     snprintf(
         title,
         sizeof(title),
-        "Solar System Vulkan | FPS %.1f | Speed %.1fx%s | WASD move | Mouse drag look | Wheel zoom | +/- speed | Space pause",
+        "Solar System Vulkan | FPS %.1f | Speed %.1fx%s | Camera %s -> %s | WASD move | Mouse drag look | Wheel zoom | L lock target | 0 Sun | 1-8 planets",
         fps,
         speed,
-        paused ? " | PAUSED" : ""
+        paused ? " | PAUSED" : "",
+        camera_locked ? "LOCKED" : "FREE",
+        focus_name
     );
     glfwSetWindowTitle(window, title);
+}
+
+static Vec3 target_position(const SolarSystem *ss, int target_index) {
+    if (target_index == 0) {
+        return vec3(0.0f, 0.0f, 0.0f);
+    }
+    if (target_index >= 1 && target_index <= (int) ARRAY_LEN(ss->planets)) {
+        return planet_position(&ss->planets[target_index - 1]);
+    }
+    return vec3(0.0f, 0.0f, 0.0f);
+}
+
+static const char *target_name(const SolarSystem *ss, int target_index) {
+    if (target_index == 0) {
+        return "Sun";
+    }
+    if (target_index >= 1 && target_index <= (int) ARRAY_LEN(ss->planets)) {
+        return ss->planets[target_index - 1].name;
+    }
+    return "None";
 }
 
 static QueueFamilyIndices find_queue_families(VkPhysicalDevice device, VkSurfaceKHR surface) {
@@ -2333,8 +2378,9 @@ int main(void) {
     VulkanApp app = {0};
     SolarSystem solar_system;
     Camera camera;
-    float speed = 8.0f;
+    float speed = 1.0f;
     bool paused = false;
+    bool camera_locked = false;
 
     solar_system_init(&solar_system);
     camera_init(&camera);
@@ -2352,6 +2398,9 @@ int main(void) {
     bool prev_space = false;
     bool prev_plus = false;
     bool prev_minus = false;
+    bool prev_l = false;
+    bool prev_digits[10] = {false};
+    int target_index = 0;
 
     while (!glfwWindowShouldClose(app.window)) {
         double now = glfwGetTime();
@@ -2366,8 +2415,14 @@ int main(void) {
         bool space_pressed = glfwGetKey(app.window, GLFW_KEY_SPACE) == GLFW_PRESS;
         bool plus_pressed = glfwGetKey(app.window, GLFW_KEY_EQUAL) == GLFW_PRESS || glfwGetKey(app.window, GLFW_KEY_KP_ADD) == GLFW_PRESS;
         bool minus_pressed = glfwGetKey(app.window, GLFW_KEY_MINUS) == GLFW_PRESS || glfwGetKey(app.window, GLFW_KEY_KP_SUBTRACT) == GLFW_PRESS;
+        bool l_pressed = glfwGetKey(app.window, GLFW_KEY_L) == GLFW_PRESS;
         if (space_pressed && !prev_space) {
             paused = !paused;
+        }
+        if (l_pressed && !prev_l) {
+            camera_locked = !camera_locked;
+            camera.dragging = false;
+            camera.zoom_delta = 0.0f;
         }
         if (plus_pressed && !prev_plus) {
             speed += 0.5f;
@@ -2381,9 +2436,18 @@ int main(void) {
                 speed = 0.1f;
             }
         }
+        for (int i = 0; i <= 9; ++i) {
+            int key = i == 0 ? GLFW_KEY_0 : (GLFW_KEY_0 + i);
+            bool pressed = glfwGetKey(app.window, key) == GLFW_PRESS;
+            if (pressed && !prev_digits[i] && (i == 0 || i <= (int) ARRAY_LEN(solar_system.planets))) {
+                target_index = i;
+            }
+            prev_digits[i] = pressed;
+        }
         prev_space = space_pressed;
         prev_plus = plus_pressed;
         prev_minus = minus_pressed;
+        prev_l = l_pressed;
 
         float move_forward = 0.0f;
         float move_right = 0.0f;
@@ -2408,6 +2472,9 @@ int main(void) {
         if (!paused) {
             solar_system_update(&solar_system, dt, speed);
         }
+        if (camera_locked) {
+            camera_look_at_target(&camera, target_position(&solar_system, target_index));
+        }
 
         draw_frame(&app, &solar_system, &camera);
 
@@ -2416,7 +2483,7 @@ int main(void) {
             fps = (float) fps_frames / (float) (now - fps_timer);
             fps_frames = 0;
             fps_timer = now;
-            update_window_title(app.window, fps, speed, paused);
+            update_window_title(app.window, fps, speed, paused, camera_locked, target_name(&solar_system, target_index));
         }
     }
 
