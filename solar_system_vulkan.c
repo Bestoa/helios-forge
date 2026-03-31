@@ -21,6 +21,7 @@
 #define WINDOW_HEIGHT 800
 #define MAX_FRAMES_IN_FLIGHT 2
 #define MAX_TEXTURES 10
+#define TARGET_MSAA_SAMPLES VK_SAMPLE_COUNT_4_BIT
 
 typedef struct {
     float m[16];
@@ -190,6 +191,10 @@ typedef struct {
     VkDeviceMemory depth_memory;
     VkImageView depth_image_view;
     VkFormat depth_format;
+    VkImage color_image;
+    VkDeviceMemory color_memory;
+    VkImageView color_image_view;
+    VkSampleCountFlagBits msaa_samples;
 
     VkSemaphore image_available[MAX_FRAMES_IN_FLIGHT];
     VkSemaphore render_finished[MAX_FRAMES_IN_FLIGHT];
@@ -1139,11 +1144,31 @@ static VkFormat find_depth_format(VulkanApp *app) {
     return find_supported_format(app, candidates, ARRAY_LEN(candidates), VK_IMAGE_TILING_OPTIMAL, VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT);
 }
 
+static VkSampleCountFlagBits get_max_usable_sample_count(VulkanApp *app) {
+    VkPhysicalDeviceProperties properties;
+    vkGetPhysicalDeviceProperties(app->physical_device, &properties);
+    VkSampleCountFlags counts =
+        properties.limits.framebufferColorSampleCounts &
+        properties.limits.framebufferDepthSampleCounts;
+
+    if ((counts & TARGET_MSAA_SAMPLES) == TARGET_MSAA_SAMPLES) {
+        return TARGET_MSAA_SAMPLES;
+    }
+    if ((counts & VK_SAMPLE_COUNT_2_BIT) == VK_SAMPLE_COUNT_2_BIT) {
+        fprintf(stderr, "4x MSAA unsupported on this GPU, falling back to 2x MSAA.\n");
+        return VK_SAMPLE_COUNT_2_BIT;
+    }
+
+    fprintf(stderr, "MSAA unsupported on this GPU, falling back to 1x.\n");
+    return VK_SAMPLE_COUNT_1_BIT;
+}
+
 static void create_image(
     VulkanApp *app,
     uint32_t width,
     uint32_t height,
     VkFormat format,
+    VkSampleCountFlagBits samples,
     VkImageTiling tiling,
     VkImageUsageFlags usage,
     VkMemoryPropertyFlags properties,
@@ -1160,7 +1185,7 @@ static void create_image(
         .tiling = tiling,
         .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
         .usage = usage,
-        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .samples = samples,
         .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
     };
     vk_check(vkCreateImage(app->device, &image_info, NULL, image), "vkCreateImage");
@@ -1232,6 +1257,7 @@ static void create_texture_from_file_with_format(VulkanApp *app, const char *pat
         (uint32_t) width,
         (uint32_t) height,
         format,
+        VK_SAMPLE_COUNT_1_BIT,
         VK_IMAGE_TILING_OPTIMAL,
         VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
@@ -1387,23 +1413,34 @@ static void create_logical_device(VulkanApp *app) {
 static void create_render_pass(VulkanApp *app) {
     VkAttachmentDescription color_attachment = {
         .format = app->swapchain_image_format,
-        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .samples = app->msaa_samples,
         .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-        .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+        .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
         .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
         .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
         .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-        .finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+        .finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
     };
     VkAttachmentDescription depth_attachment = {
         .format = app->depth_format,
-        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .samples = app->msaa_samples,
         .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
         .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
         .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
         .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
         .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
         .finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+    };
+
+    VkAttachmentDescription resolve_attachment = {
+        .format = app->swapchain_image_format,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+        .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+        .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+        .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+        .finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
     };
 
     VkAttachmentReference color_ref = {
@@ -1414,11 +1451,16 @@ static void create_render_pass(VulkanApp *app) {
         .attachment = 1,
         .layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
     };
+    VkAttachmentReference resolve_ref = {
+        .attachment = 2,
+        .layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+    };
 
     VkSubpassDescription subpass = {
         .pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
         .colorAttachmentCount = 1,
         .pColorAttachments = &color_ref,
+        .pResolveAttachments = &resolve_ref,
         .pDepthStencilAttachment = &depth_ref,
     };
 
@@ -1430,7 +1472,7 @@ static void create_render_pass(VulkanApp *app) {
         .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
     };
 
-    VkAttachmentDescription attachments[] = {color_attachment, depth_attachment};
+    VkAttachmentDescription attachments[] = {color_attachment, depth_attachment, resolve_attachment};
     VkRenderPassCreateInfo render_pass_info = {
         .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
         .attachmentCount = (uint32_t) ARRAY_LEN(attachments),
@@ -1564,7 +1606,7 @@ static void create_pipeline_common(
 
     VkPipelineMultisampleStateCreateInfo multisampling = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
-        .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
+        .rasterizationSamples = app->msaa_samples,
     };
 
     VkPipelineDepthStencilStateCreateInfo depth_stencil = {
@@ -1697,6 +1739,16 @@ static void create_pipelines(VulkanApp *app) {
 }
 
 static void cleanup_swapchain(VulkanApp *app) {
+    if (app->color_image_view != VK_NULL_HANDLE) {
+        vkDestroyImageView(app->device, app->color_image_view, NULL);
+        app->color_image_view = VK_NULL_HANDLE;
+    }
+    if (app->color_image != VK_NULL_HANDLE) {
+        vkDestroyImage(app->device, app->color_image, NULL);
+        vkFreeMemory(app->device, app->color_memory, NULL);
+        app->color_image = VK_NULL_HANDLE;
+        app->color_memory = VK_NULL_HANDLE;
+    }
     if (app->depth_image_view != VK_NULL_HANDLE) {
         vkDestroyImageView(app->device, app->depth_image_view, NULL);
         app->depth_image_view = VK_NULL_HANDLE;
@@ -1733,6 +1785,22 @@ static void cleanup_swapchain(VulkanApp *app) {
         vkDestroySwapchainKHR(app->device, app->swapchain, NULL);
         app->swapchain = VK_NULL_HANDLE;
     }
+}
+
+static void create_color_resources(VulkanApp *app) {
+    create_image(
+        app,
+        app->swapchain_extent.width,
+        app->swapchain_extent.height,
+        app->swapchain_image_format,
+        app->msaa_samples,
+        VK_IMAGE_TILING_OPTIMAL,
+        VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        &app->color_image,
+        &app->color_memory
+    );
+    app->color_image_view = create_image_view(app, app->color_image, app->swapchain_image_format, VK_IMAGE_ASPECT_COLOR_BIT);
 }
 
 static void create_swapchain(VulkanApp *app) {
@@ -1794,6 +1862,7 @@ static void create_depth_resources(VulkanApp *app) {
         app->swapchain_extent.width,
         app->swapchain_extent.height,
         app->depth_format,
+        app->msaa_samples,
         VK_IMAGE_TILING_OPTIMAL,
         VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
@@ -1807,8 +1876,9 @@ static void create_framebuffers(VulkanApp *app) {
     app->swapchain_framebuffers = (VkFramebuffer *) calloc(app->swapchain_image_count, sizeof(VkFramebuffer));
     for (uint32_t i = 0; i < app->swapchain_image_count; ++i) {
         VkImageView attachments[] = {
-            app->swapchain_image_views[i],
-            app->depth_image_view
+            app->color_image_view,
+            app->depth_image_view,
+            app->swapchain_image_views[i]
         };
         VkFramebufferCreateInfo framebuffer_info = {
             .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
@@ -1833,6 +1903,7 @@ static void recreate_swapchain(VulkanApp *app) {
     vkDeviceWaitIdle(app->device);
     cleanup_swapchain(app);
     create_swapchain(app);
+    create_color_resources(app);
     create_depth_resources(app);
     create_framebuffers(app);
 }
@@ -2034,9 +2105,10 @@ static void record_command_buffer(VulkanApp *app, VkCommandBuffer cmd, uint32_t 
     };
     vk_check(vkBeginCommandBuffer(cmd, &begin_info), "vkBeginCommandBuffer");
 
-    VkClearValue clears[2];
+    VkClearValue clears[3];
     clears[0].color = (VkClearColorValue) {{0.0f, 0.0f, 0.01f, 1.0f}};
     clears[1].depthStencil = (VkClearDepthStencilValue) {1.0f, 0};
+    clears[2].color = (VkClearColorValue) {{0.0f, 0.0f, 0.0f, 0.0f}};
 
     VkRenderPassBeginInfo pass_info = {
         .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
@@ -2044,7 +2116,7 @@ static void record_command_buffer(VulkanApp *app, VkCommandBuffer cmd, uint32_t 
         .framebuffer = app->swapchain_framebuffers[image_index],
         .renderArea.offset = {0, 0},
         .renderArea.extent = app->swapchain_extent,
-        .clearValueCount = 2,
+        .clearValueCount = 3,
         .pClearValues = clears,
     };
     vkCmdBeginRenderPass(cmd, &pass_info, VK_SUBPASS_CONTENTS_INLINE);
@@ -2321,6 +2393,7 @@ static void init_vulkan(VulkanApp *app, const SolarSystem *ss) {
     create_instance(app);
     vk_check(glfwCreateWindowSurface(app->instance, app->window, NULL, &app->surface), "glfwCreateWindowSurface");
     pick_physical_device(app);
+    app->msaa_samples = get_max_usable_sample_count(app);
     create_logical_device(app);
     create_swapchain(app);
     create_descriptor_set_layout(app);
@@ -2330,6 +2403,7 @@ static void init_vulkan(VulkanApp *app, const SolarSystem *ss) {
     create_command_pool(app);
     create_texture_sampler(app);
     load_scene_textures(app, ss);
+    create_color_resources(app);
     create_depth_resources(app);
     create_framebuffers(app);
     create_uniform_buffers(app);

@@ -792,6 +792,8 @@ def create_opengl_window(width, height):
         for vsync in (1, 0):
             try:
                 pygame.display.gl_set_attribute(pygame.GL_DOUBLEBUFFER, 1)
+                pygame.display.gl_set_attribute(pygame.GL_MULTISAMPLEBUFFERS, 1)
+                pygame.display.gl_set_attribute(pygame.GL_MULTISAMPLESAMPLES, 4)
                 if major is not None:
                     pygame.display.gl_set_attribute(pygame.GL_CONTEXT_MAJOR_VERSION, major)
                     pygame.display.gl_set_attribute(pygame.GL_CONTEXT_MINOR_VERSION, minor)
@@ -834,6 +836,7 @@ def main():
     # Setup OpenGL state
     glClearColor(0.0, 0.0, 0.01, 1.0)
     glEnable(GL_DEPTH_TEST)
+    glEnable(GL_MULTISAMPLE)
     glEnable(GL_CULL_FACE)
     glCullFace(GL_BACK)
     glFrontFace(GL_CCW)

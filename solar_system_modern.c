@@ -24,6 +24,7 @@
 #define ARRAY_LEN(a) (sizeof(a) / sizeof((a)[0]))
 #define WINDOW_WIDTH 1200
 #define WINDOW_HEIGHT 800
+#define MSAA_SAMPLES 4
 #define MAX_PATH_LEN 1024
 
 typedef struct {
@@ -1158,6 +1159,7 @@ int main(int argc, char **argv) {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_DOUBLEBUFFER, GLFW_TRUE);
+    glfwWindowHint(GLFW_SAMPLES, MSAA_SAMPLES);
 
     GLFWwindow *window = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "Solar System C", NULL, NULL);
     if (!window) {
@@ -1184,6 +1186,7 @@ int main(int argc, char **argv) {
     glViewport(0, 0, WINDOW_WIDTH, WINDOW_HEIGHT);
     glClearColor(0.0f, 0.0f, 0.01f, 1.0f);
     glEnable(GL_DEPTH_TEST);
+    glEnable(GL_MULTISAMPLE);
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
     glFrontFace(GL_CCW);
