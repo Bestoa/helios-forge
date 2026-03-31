@@ -1,3 +1,4 @@
 __pycache__/
 solar_system_modern
 solar_system_vulkan
+shaders/*.spv

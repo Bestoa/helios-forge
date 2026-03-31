@@ -124,6 +124,38 @@ Install Python dependencies:
 python3 -m pip install -r requirements.txt
 ```
 
+### macOS Vulkan Notes
+
+macOS does not natively support Vulkan. It requires [MoltenVK](https://github.com/KhronosGroup/MoltenVK) (a Vulkan-to-Metal translation layer).
+
+1. Install dependencies:
+
+   ```bash
+   brew install molten-vk vulkan-loader shaderc vulkan-tools
+   ```
+
+2. The Homebrew GLFW bottle is **not** compiled with Vulkan support. Rebuild GLFW from source:
+
+   ```bash
+   git clone --depth 1 --branch 3.4 https://github.com/glfw/glfw.git /tmp/glfw-build
+   cmake -S /tmp/glfw-build -B /tmp/glfw-build/build \
+     -DCMAKE_PREFIX_PATH=$(brew --prefix) \
+     -DBUILD_SHARED_LIBS=ON \
+     -DGLFW_BUILD_DOCS=OFF -DGLFW_BUILD_TESTS=OFF -DGLFW_BUILD_EXAMPLES=OFF
+   cmake --build /tmp/glfw-build/build
+   cp /tmp/glfw-build/build/src/libglfw.3.4.dylib $(brew --prefix)/opt/glfw/lib/libglfw.3.4.dylib
+   ```
+
+3. Set the environment variable before running:
+
+   ```bash
+   export VK_ICD_FILENAMES=$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json
+   ```
+
+   Add it to your shell profile (`~/.zshrc`) to persist across sessions.
+
+Note: running `brew upgrade glfw` will replace the Vulkan-enabled build. Re-run step 2 afterwards.
+
 ### Build
 
 Build everything:
@@ -286,6 +318,38 @@ Python 版本需要：
 ```bash
 python3 -m pip install -r requirements.txt
 ```
+
+### macOS Vulkan 注意事项
+
+macOS 不原生支持 Vulkan，需要通过 [MoltenVK](https://github.com/KhronosGroup/MoltenVK)（Vulkan 到 Metal 的翻译层）运行。
+
+1. 安装依赖：
+
+   ```bash
+   brew install molten-vk vulkan-loader shaderc vulkan-tools
+   ```
+
+2. Homebrew 的 GLFW bottle **未编译 Vulkan 支持**，需要从源码重建：
+
+   ```bash
+   git clone --depth 1 --branch 3.4 https://github.com/glfw/glfw.git /tmp/glfw-build
+   cmake -S /tmp/glfw-build -B /tmp/glfw-build/build \
+     -DCMAKE_PREFIX_PATH=$(brew --prefix) \
+     -DBUILD_SHARED_LIBS=ON \
+     -DGLFW_BUILD_DOCS=OFF -DGLFW_BUILD_TESTS=OFF -DGLFW_BUILD_EXAMPLES=OFF
+   cmake --build /tmp/glfw-build/build
+   cp /tmp/glfw-build/build/src/libglfw.3.4.dylib $(brew --prefix)/opt/glfw/lib/libglfw.3.4.dylib
+   ```
+
+3. 运行前设置环境变量：
+
+   ```bash
+   export VK_ICD_FILENAMES=$(brew --prefix)/etc/vulkan/icd.d/MoltenVK_icd.json
+   ```
+
+   可写入 `~/.zshrc` 使其持久化。
+
+注意：`brew upgrade glfw` 会覆盖 Vulkan 版本，升级后需重新执行第 2 步。
 
 ### 构建
 

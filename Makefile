@@ -1,8 +1,17 @@
 CC ?= cc
-CFLAGS ?= -O2 -Wall -Wextra -std=c11
-LDFLAGS ?=
-LIBS := $(shell pkg-config --libs glfw3 glew opengl) -lm
-VULKAN_LIBS := $(shell pkg-config --libs glfw3 vulkan) -lm
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+    BREW_PREFIX := $(shell brew --prefix 2>/dev/null)
+    CFLAGS ?= -O2 -Wall -Wextra -std=c11 -I$(BREW_PREFIX)/include
+    LDFLAGS ?= -L$(BREW_PREFIX)/lib -Wl,-rpath,$(BREW_PREFIX)/lib
+    LIBS := -lglfw -lGLEW -framework OpenGL -lm
+    VULKAN_LIBS := -lglfw -lvulkan -lm
+else
+    CFLAGS ?= -O2 -Wall -Wextra -std=c11
+    LDFLAGS ?=
+    LIBS := $(shell pkg-config --libs glfw3 glew opengl) -lm
+    VULKAN_LIBS := $(shell pkg-config --libs glfw3 vulkan) -lm
+endif
 GLSLC ?= glslc
 
 TARGET := solar_system_modern

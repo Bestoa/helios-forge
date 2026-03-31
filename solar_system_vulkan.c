@@ -206,7 +206,8 @@ typedef struct {
 static Camera *g_scroll_camera = NULL;
 
 static const char *k_device_extensions[] = {
-    VK_KHR_SWAPCHAIN_EXTENSION_NAME
+    VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+    "VK_KHR_portability_subset",
 };
 
 static float randf_range(float min_v, float max_v) {
@@ -1350,14 +1351,23 @@ static void create_instance(VulkanApp *app) {
     uint32_t extension_count = 0;
     const char **extensions = glfwGetRequiredInstanceExtensions(&extension_count);
 
+    /* MoltenVK on macOS requires portability enumeration */
+    const char *portability_ext = VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
+    const char **all_extensions = (const char **) malloc(
+        (extension_count + 1) * sizeof(const char *));
+    memcpy(all_extensions, extensions, extension_count * sizeof(const char *));
+    all_extensions[extension_count++] = portability_ext;
+
     VkInstanceCreateInfo create_info = {
         .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
         .pApplicationInfo = &app_info,
         .enabledExtensionCount = extension_count,
-        .ppEnabledExtensionNames = extensions,
+        .ppEnabledExtensionNames = all_extensions,
+        .flags = VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR,
     };
 
     vk_check(vkCreateInstance(&create_info, NULL, &app->instance), "vkCreateInstance");
+    free(all_extensions);
 }
 
 static void pick_physical_device(VulkanApp *app) {
