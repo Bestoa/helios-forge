@@ -199,6 +199,7 @@ typedef struct {
     VkSemaphore image_available[MAX_FRAMES_IN_FLIGHT];
     VkSemaphore render_finished[MAX_FRAMES_IN_FLIGHT];
     VkFence in_flight[MAX_FRAMES_IN_FLIGHT];
+    VkFence *images_in_flight;
     uint32_t current_frame;
 } VulkanApp;
 
@@ -1079,12 +1080,24 @@ static VkSurfaceFormatKHR choose_swap_surface_format(const SwapchainSupportDetai
     return support->formats[0];
 }
 
-static VkPresentModeKHR choose_present_mode(const SwapchainSupportDetails *support) {
-    for (uint32_t i = 0; i < support->present_mode_count; ++i) {
-        if (support->present_modes[i] == VK_PRESENT_MODE_MAILBOX_KHR) {
-            return VK_PRESENT_MODE_MAILBOX_KHR;
-        }
+static const char *present_mode_name(VkPresentModeKHR mode) {
+    switch (mode) {
+        case VK_PRESENT_MODE_IMMEDIATE_KHR: return "IMMEDIATE";
+        case VK_PRESENT_MODE_MAILBOX_KHR: return "MAILBOX";
+        case VK_PRESENT_MODE_FIFO_KHR: return "FIFO";
+        case VK_PRESENT_MODE_FIFO_RELAXED_KHR: return "FIFO_RELAXED";
+        default: return "UNKNOWN";
     }
+}
+
+static VkPresentModeKHR choose_present_mode(const SwapchainSupportDetails *support) {
+    printf("Available present modes:\n");
+    for (uint32_t i = 0; i < support->present_mode_count; ++i) {
+        printf("  %s\n", present_mode_name(support->present_modes[i]));
+    }
+
+    (void)support;
+    printf("Selected: FIFO (forced)\n");
     return VK_PRESENT_MODE_FIFO_KHR;
 }
 
@@ -1367,6 +1380,19 @@ static void pick_physical_device(VulkanApp *app) {
         fprintf(stderr, "Failed to find a suitable Vulkan physical device.\n");
         exit(EXIT_FAILURE);
     }
+
+    VkPhysicalDeviceProperties props;
+    vkGetPhysicalDeviceProperties(app->physical_device, &props);
+    printf("GPU: %s\n", props.deviceName);
+    printf("Driver: %u.%u.%u\n", VK_VERSION_MAJOR(props.driverVersion),
+           VK_VERSION_MINOR(props.driverVersion), VK_VERSION_PATCH(props.driverVersion));
+    printf("Vulkan: %u.%u.%u\n", VK_VERSION_MAJOR(props.apiVersion),
+           VK_VERSION_MINOR(props.apiVersion), VK_VERSION_PATCH(props.apiVersion));
+
+    QueueFamilyIndices indices = find_queue_families(app->physical_device, app->surface);
+    printf("Queue families: graphics=%u present=%u %s\n",
+           indices.graphics_family, indices.present_family,
+           indices.graphics_family == indices.present_family ? "(same queue)" : "(different queues!)");
 }
 
 static void create_logical_device(VulkanApp *app) {
@@ -1780,6 +1806,9 @@ static void cleanup_swapchain(VulkanApp *app) {
     }
     free(app->swapchain_images);
     app->swapchain_images = NULL;
+    free(app->images_in_flight);
+    app->images_in_flight = NULL;
+    app->swapchain_image_count = 0;
 
     if (app->swapchain != VK_NULL_HANDLE) {
         vkDestroySwapchainKHR(app->device, app->swapchain, NULL);
@@ -1809,7 +1838,10 @@ static void create_swapchain(VulkanApp *app) {
     VkPresentModeKHR present_mode = choose_present_mode(&support);
     VkExtent2D extent = choose_extent(&support, app->window);
 
-    uint32_t image_count = support.capabilities.minImageCount + 1;
+    uint32_t image_count = support.capabilities.minImageCount;
+    if (present_mode != VK_PRESENT_MODE_FIFO_KHR && present_mode != VK_PRESENT_MODE_FIFO_RELAXED_KHR) {
+        image_count = support.capabilities.minImageCount + 1;
+    }
     if (support.capabilities.maxImageCount > 0 && image_count > support.capabilities.maxImageCount) {
         image_count = support.capabilities.maxImageCount;
     }
@@ -1844,8 +1876,15 @@ static void create_swapchain(VulkanApp *app) {
     app->swapchain_images = (VkImage *) malloc(image_count * sizeof(VkImage));
     vkGetSwapchainImagesKHR(app->device, app->swapchain, &image_count, app->swapchain_images);
     app->swapchain_image_count = image_count;
+    printf(
+        "Swapchain image count: %u (min=%u, max=%u)\n",
+        image_count,
+        support.capabilities.minImageCount,
+        support.capabilities.maxImageCount
+    );
     app->swapchain_image_format = format.format;
     app->swapchain_extent = extent;
+    app->images_in_flight = (VkFence *) calloc(image_count, sizeof(VkFence));
 
     app->swapchain_image_views = (VkImageView *) calloc(image_count, sizeof(VkImageView));
     for (uint32_t i = 0; i < image_count; ++i) {
@@ -2335,12 +2374,19 @@ static void draw_frame(VulkanApp *app, SolarSystem *ss, const Camera *camera) {
         return;
     }
     vk_check(acquire, "vkAcquireNextImageKHR");
+    if (app->images_in_flight[image_index] != VK_NULL_HANDLE) {
+        vk_check(
+            vkWaitForFences(app->device, 1, &app->images_in_flight[image_index], VK_TRUE, UINT64_MAX),
+            "vkWaitForFences(images_in_flight)"
+        );
+    }
 
     update_uniform_buffer(app, camera);
 
     vk_check(vkResetFences(app->device, 1, &app->in_flight[app->current_frame]), "vkResetFences");
     vk_check(vkResetCommandBuffer(app->command_buffers[app->current_frame], 0), "vkResetCommandBuffer");
     record_command_buffer(app, app->command_buffers[app->current_frame], image_index, ss);
+    app->images_in_flight[image_index] = app->in_flight[app->current_frame];
 
     VkSemaphore wait_semaphores[] = {app->image_available[app->current_frame]};
     VkPipelineStageFlags wait_stages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
