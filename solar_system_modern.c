@@ -41,6 +41,11 @@ typedef struct {
 } Vec3;
 
 typedef struct {
+    Vec3 periapsis_dir;
+    Vec3 minor_dir;
+} OrbitFrame;
+
+typedef struct {
     GLuint program;
     GLint u_model;
     GLint u_view;
@@ -81,10 +86,14 @@ typedef struct {
 typedef struct {
     char name[16];
     float orbit_radius;
+    float orbit_eccentricity;
+    float orbit_inclination_deg;
+    float orbit_ascending_node_deg;
+    float orbit_periapsis_deg;
+    float orbit_days;
+    float orbit_mean_anomaly_deg;
     float size;
     Vec3 color;
-    float period_years;
-    float angle_deg;
     float axial_tilt_deg;
     float rotation_period_days;
     float rotation_angle_deg;
@@ -92,6 +101,7 @@ typedef struct {
     Vec3 ring_color;
     float ring_inner;
     float ring_outer;
+    OrbitFrame orbit_frame;
     char texture_name[64];
     GLuint texture;
 } Planet;
@@ -730,15 +740,71 @@ static void create_ring_mesh(float inner_radius, float outer_radius, int segment
     free(indices);
 }
 
-static void create_orbit_line(float radius, int segments, Mesh *mesh) {
+static float deg_to_rad(float degrees) {
+    return degrees * (float) M_PI / 180.0f;
+}
+
+static float solve_eccentric_anomaly(float mean_anomaly, float eccentricity) {
+    float eccentric_anomaly = eccentricity < 0.8f ? mean_anomaly : (float) M_PI;
+    for (int i = 0; i < 6; ++i) {
+        float sin_e = sinf(eccentric_anomaly);
+        float cos_e = cosf(eccentric_anomaly);
+        float f = eccentric_anomaly - eccentricity * sin_e - mean_anomaly;
+        float fp = 1.0f - eccentricity * cos_e;
+        if (fabsf(fp) < 1e-4f) {
+            fp = fp < 0.0f ? -1e-4f : 1e-4f;
+        }
+        eccentric_anomaly -= f / fp;
+    }
+    return eccentric_anomaly;
+}
+
+static OrbitFrame orbit_frame_from_elements(float ascending_node_deg, float inclination_deg, float periapsis_deg) {
+    float node = deg_to_rad(ascending_node_deg);
+    float inclination = deg_to_rad(inclination_deg);
+    float periapsis = deg_to_rad(periapsis_deg);
+    float cos_node = cosf(node);
+    float sin_node = sinf(node);
+    float cos_inclination = cosf(inclination);
+    float sin_inclination = sinf(inclination);
+    float cos_periapsis = cosf(periapsis);
+    float sin_periapsis = sinf(periapsis);
+
+    OrbitFrame frame;
+    frame.periapsis_dir = vec3(
+        cos_node * cos_periapsis - sin_node * sin_periapsis * cos_inclination,
+        sin_periapsis * sin_inclination,
+        sin_node * cos_periapsis + cos_node * sin_periapsis * cos_inclination
+    );
+    frame.minor_dir = vec3(
+        -cos_node * sin_periapsis - sin_node * cos_periapsis * cos_inclination,
+        cos_periapsis * sin_inclination,
+        -sin_node * sin_periapsis + cos_node * cos_periapsis * cos_inclination
+    );
+    return frame;
+}
+
+static Vec3 orbit_to_world(const Planet *planet, float radius, float true_anomaly) {
+    float cos_v = cosf(true_anomaly);
+    float sin_v = sinf(true_anomaly);
+    return vec3_add(
+        vec3_scale(planet->orbit_frame.periapsis_dir, radius * cos_v),
+        vec3_scale(planet->orbit_frame.minor_dir, radius * sin_v)
+    );
+}
+
+static void create_orbit_path(const Planet *planet, int segments, Mesh *mesh) {
     int vertex_count = segments + 1;
     float *positions = (float *) malloc((size_t) vertex_count * 3 * sizeof(float));
     int p = 0;
+    float semi_latus_rectum = planet->orbit_radius * (1.0f - planet->orbit_eccentricity * planet->orbit_eccentricity);
     for (int i = 0; i <= segments; ++i) {
-        float theta = 2.0f * (float) M_PI * (float) i / (float) segments;
-        positions[p++] = radius * cosf(theta);
-        positions[p++] = 0.0f;
-        positions[p++] = radius * sinf(theta);
+        float true_anomaly = 2.0f * (float) M_PI * (float) i / (float) segments;
+        float radius = semi_latus_rectum / (1.0f + planet->orbit_eccentricity * cosf(true_anomaly));
+        Vec3 position = orbit_to_world(planet, radius, true_anomaly);
+        positions[p++] = position.x;
+        positions[p++] = position.y;
+        positions[p++] = position.z;
     }
 
     mesh_init(mesh, GL_LINE_STRIP);
@@ -883,9 +949,14 @@ static void planet_init(
     Planet *planet,
     const char *name,
     float orbit_radius,
+    float orbit_eccentricity,
+    float orbit_inclination_deg,
+    float orbit_ascending_node_deg,
+    float orbit_periapsis_deg,
     float size,
     Vec3 color,
-    float period_years,
+    float orbit_days,
+    float orbit_phase_deg,
     float axial_tilt_deg,
     float rotation_period_days,
     bool has_ring,
@@ -897,10 +968,14 @@ static void planet_init(
     memset(planet, 0, sizeof(*planet));
     snprintf(planet->name, sizeof(planet->name), "%s", name);
     planet->orbit_radius = orbit_radius;
+    planet->orbit_eccentricity = orbit_eccentricity;
+    planet->orbit_inclination_deg = orbit_inclination_deg;
+    planet->orbit_ascending_node_deg = orbit_ascending_node_deg;
+    planet->orbit_periapsis_deg = orbit_periapsis_deg;
     planet->size = size;
     planet->color = color;
-    planet->period_years = period_years;
-    planet->angle_deg = randf_range(0.0f, 360.0f);
+    planet->orbit_days = orbit_days;
+    planet->orbit_mean_anomaly_deg = orbit_phase_deg;
     planet->axial_tilt_deg = axial_tilt_deg;
     planet->rotation_period_days = rotation_period_days;
     planet->rotation_angle_deg = randf_range(0.0f, 360.0f);
@@ -908,16 +983,25 @@ static void planet_init(
     planet->ring_color = ring_color;
     planet->ring_inner = ring_inner;
     planet->ring_outer = ring_outer;
+    planet->orbit_frame = orbit_frame_from_elements(
+        orbit_ascending_node_deg,
+        orbit_inclination_deg,
+        orbit_periapsis_deg
+    );
     snprintf(planet->texture_name, sizeof(planet->texture_name), "%s", texture_name);
 }
 
 static Vec3 planet_position(const Planet *planet) {
-    float rad = planet->angle_deg * (float) M_PI / 180.0f;
-    return vec3(
-        planet->orbit_radius * cosf(rad),
-        0.0f,
-        planet->orbit_radius * sinf(rad)
+    float mean_anomaly = deg_to_rad(planet->orbit_mean_anomaly_deg);
+    float eccentric_anomaly = solve_eccentric_anomaly(mean_anomaly, planet->orbit_eccentricity);
+    float cos_e = cosf(eccentric_anomaly);
+    float sin_e = sinf(eccentric_anomaly);
+    float radius = planet->orbit_radius * (1.0f - planet->orbit_eccentricity * cos_e);
+    float true_anomaly = atan2f(
+        sqrtf(1.0f - planet->orbit_eccentricity * planet->orbit_eccentricity) * sin_e,
+        cos_e - planet->orbit_eccentricity
     );
+    return orbit_to_world(planet, radius, true_anomaly);
 }
 
 static Mat4 planet_model_matrix(const Planet *planet) {
@@ -932,14 +1016,14 @@ static void solar_system_init(SolarSystem *ss) {
     memset(ss, 0, sizeof(*ss));
     srand(42);
 
-    planet_init(&ss->planets[0], "Mercury", 4.0f, 0.15f, vec3(0.7f, 0.7f, 0.7f), 0.24f, 0.03f, 58.65f, false, vec3(1.0f, 1.0f, 1.0f), 0.0f, 0.0f, "mercury.jpg");
-    planet_init(&ss->planets[1], "Venus", 6.0f, 0.30f, vec3(0.9f, 0.7f, 0.3f), 0.62f, 177.36f, -243.02f, false, vec3(1.0f, 1.0f, 1.0f), 0.0f, 0.0f, "venus.jpg");
-    planet_init(&ss->planets[2], "Earth", 8.0f, 0.32f, vec3(0.2f, 0.5f, 1.0f), 1.0f, 23.44f, 0.997f, false, vec3(1.0f, 1.0f, 1.0f), 0.0f, 0.0f, "earth.jpg");
-    planet_init(&ss->planets[3], "Mars", 10.0f, 0.20f, vec3(0.9f, 0.3f, 0.2f), 1.88f, 25.19f, 1.03f, false, vec3(1.0f, 1.0f, 1.0f), 0.0f, 0.0f, "mars.jpg");
-    planet_init(&ss->planets[4], "Jupiter", 15.0f, 0.90f, vec3(0.8f, 0.6f, 0.4f), 11.86f, 3.13f, 0.41f, false, vec3(1.0f, 1.0f, 1.0f), 0.0f, 0.0f, "jupiter.jpg");
-    planet_init(&ss->planets[5], "Saturn", 20.0f, 0.80f, vec3(0.9f, 0.8f, 0.5f), 29.46f, 26.73f, 0.45f, true, vec3(0.85f, 0.75f, 0.55f), 1.0f, 1.6f, "saturn.jpg");
-    planet_init(&ss->planets[6], "Uranus", 26.0f, 0.50f, vec3(0.5f, 0.8f, 0.9f), 84.01f, 97.77f, -0.72f, false, vec3(1.0f, 1.0f, 1.0f), 0.0f, 0.0f, "uranus.jpg");
-    planet_init(&ss->planets[7], "Neptune", 32.0f, 0.50f, vec3(0.2f, 0.3f, 0.9f), 164.8f, 28.32f, 0.67f, false, vec3(1.0f, 1.0f, 1.0f), 0.0f, 0.0f, "neptune.jpg");
+    planet_init(&ss->planets[0], "Mercury", 4.0f, 0.2056f, 7.00f, 48.33f, 29.12f, 0.15f, vec3(0.7f, 0.7f, 0.7f), 88.0f, 10.0f, 0.03f, 58.65f, false, vec3(1.0f, 1.0f, 1.0f), 0.0f, 0.0f, "mercury.jpg");
+    planet_init(&ss->planets[1], "Venus", 5.8f, 0.0068f, 3.39f, 76.68f, 54.88f, 0.30f, vec3(0.9f, 0.7f, 0.3f), 225.0f, 75.0f, 177.36f, -243.02f, false, vec3(1.0f, 1.0f, 1.0f), 0.0f, 0.0f, "venus.jpg");
+    planet_init(&ss->planets[2], "Earth", 8.0f, 0.0167f, 0.00f, -11.26f, 114.21f, 0.32f, vec3(0.2f, 0.5f, 1.0f), 365.0f, 135.0f, 23.44f, 0.997f, false, vec3(1.0f, 1.0f, 1.0f), 0.0f, 0.0f, "earth.jpg");
+    planet_init(&ss->planets[3], "Mars", 10.5f, 0.0934f, 1.85f, 49.58f, 286.50f, 0.20f, vec3(0.9f, 0.3f, 0.2f), 687.0f, 195.0f, 25.19f, 1.03f, false, vec3(1.0f, 1.0f, 1.0f), 0.0f, 0.0f, "mars.jpg");
+    planet_init(&ss->planets[4], "Jupiter", 14.5f, 0.0489f, 1.30f, 100.46f, 273.87f, 0.90f, vec3(0.8f, 0.6f, 0.4f), 4333.0f, 250.0f, 3.13f, 0.41f, false, vec3(1.0f, 1.0f, 1.0f), 0.0f, 0.0f, "jupiter.jpg");
+    planet_init(&ss->planets[5], "Saturn", 19.0f, 0.0565f, 2.49f, 113.67f, 339.39f, 0.80f, vec3(0.9f, 0.8f, 0.5f), 10759.0f, 305.0f, 26.73f, 0.45f, true, vec3(0.85f, 0.75f, 0.55f), 1.0f, 1.6f, "saturn.jpg");
+    planet_init(&ss->planets[6], "Uranus", 23.0f, 0.0472f, 0.77f, 74.01f, 96.73f, 0.50f, vec3(0.5f, 0.8f, 0.9f), 30687.0f, 15.0f, 97.77f, -0.72f, false, vec3(1.0f, 1.0f, 1.0f), 0.0f, 0.0f, "uranus.jpg");
+    planet_init(&ss->planets[7], "Neptune", 27.5f, 0.0086f, 1.77f, 131.78f, 273.19f, 0.50f, vec3(0.2f, 0.3f, 0.9f), 60190.0f, 100.0f, 28.32f, 0.67f, false, vec3(1.0f, 1.0f, 1.0f), 0.0f, 0.0f, "neptune.jpg");
 
     ss->sun_radius = 1.5f;
     ss->sun_color = vec3(1.0f, 0.85f, 0.2f);
@@ -951,7 +1035,7 @@ static void solar_system_init(SolarSystem *ss) {
     create_ring_mesh(1.0f, 1.6f, 96, &ss->ring_mesh);
     generate_stars(1800, 220.0f, &ss->star_mesh);
     for (size_t i = 0; i < ARRAY_LEN(ss->planets); ++i) {
-        create_orbit_line(ss->planets[i].orbit_radius, 128, &ss->orbit_meshes[i]);
+        create_orbit_path(&ss->planets[i], 192, &ss->orbit_meshes[i]);
     }
 
     char texture_dir[MAX_PATH_LEN];
@@ -971,15 +1055,19 @@ static void solar_system_init(SolarSystem *ss) {
 }
 
 static void solar_system_update(SolarSystem *ss, float dt, float speed) {
+    const float orbit_day_scale = 60.0f;
     const float rotation_time_scale = 8.0f;
     for (size_t i = 0; i < ARRAY_LEN(ss->planets); ++i) {
         Planet *p = &ss->planets[i];
-        if (p->period_years > 0.0f) {
-            float angular_speed = 360.0f / (p->period_years * 60.0f);
-            p->angle_deg = fmodf(p->angle_deg + angular_speed * dt * speed, 360.0f);
+        if (p->orbit_days > 0.0f) {
+            float angular_speed = 360.0f / p->orbit_days;
+            p->orbit_mean_anomaly_deg = fmodf(p->orbit_mean_anomaly_deg + angular_speed * dt * speed * orbit_day_scale, 360.0f);
         }
         if (fabsf(p->rotation_period_days) > 1e-6f) {
-            float rotation_speed = 360.0f / (p->rotation_period_days * rotation_time_scale);
+            float rotation_speed = 360.0f / (fabsf(p->rotation_period_days) * rotation_time_scale);
+            if (p->rotation_period_days < 0.0f) {
+                rotation_speed = -rotation_speed;
+            }
             p->rotation_angle_deg = fmodf(p->rotation_angle_deg + rotation_speed * dt * speed, 360.0f);
         }
     }

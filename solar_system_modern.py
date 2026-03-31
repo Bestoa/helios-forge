@@ -237,11 +237,63 @@ def create_ring_mesh(inner_radius, outer_radius, segments):
 
     return np.array(positions, dtype=np.float32), np.array(normals, dtype=np.float32), np.array(texcoords, dtype=np.float32), np.array(indices, dtype=np.uint32)
 
-def create_orbit_line(radius, segments=120):
+def deg_to_rad(degrees):
+    return math.radians(degrees)
+
+
+def solve_eccentric_anomaly(mean_anomaly, eccentricity):
+    eccentric_anomaly = mean_anomaly if eccentricity < 0.8 else math.pi
+    for _ in range(6):
+        sin_e = math.sin(eccentric_anomaly)
+        cos_e = math.cos(eccentric_anomaly)
+        f = eccentric_anomaly - eccentricity * sin_e - mean_anomaly
+        fp = 1.0 - eccentricity * cos_e
+        if abs(fp) < 1e-4:
+            fp = -1e-4 if fp < 0.0 else 1e-4
+        eccentric_anomaly -= f / fp
+    return eccentric_anomaly
+
+
+def build_orbit_frame(ascending_node_deg, inclination_deg, periapsis_deg):
+    node = deg_to_rad(ascending_node_deg)
+    inclination = deg_to_rad(inclination_deg)
+    periapsis = deg_to_rad(periapsis_deg)
+
+    cos_node = math.cos(node)
+    sin_node = math.sin(node)
+    cos_inclination = math.cos(inclination)
+    sin_inclination = math.sin(inclination)
+    cos_periapsis = math.cos(periapsis)
+    sin_periapsis = math.sin(periapsis)
+
+    periapsis_dir = np.array([
+        cos_node * cos_periapsis - sin_node * sin_periapsis * cos_inclination,
+        sin_periapsis * sin_inclination,
+        sin_node * cos_periapsis + cos_node * sin_periapsis * cos_inclination,
+    ], dtype=np.float32)
+    minor_dir = np.array([
+        -cos_node * sin_periapsis - sin_node * cos_periapsis * cos_inclination,
+        cos_periapsis * sin_inclination,
+        -sin_node * sin_periapsis + cos_node * cos_periapsis * cos_inclination,
+    ], dtype=np.float32)
+    return periapsis_dir, minor_dir
+
+
+def orbit_to_world(orbit_frame, radius, true_anomaly):
+    periapsis_dir, minor_dir = orbit_frame
+    return (
+        periapsis_dir * (radius * math.cos(true_anomaly)) +
+        minor_dir * (radius * math.sin(true_anomaly))
+    ).astype(np.float32)
+
+
+def create_orbit_path(planet, segments=192):
     positions = []
+    semi_latus_rectum = planet.orbit_radius * (1.0 - planet.orbit_eccentricity * planet.orbit_eccentricity)
     for i in range(segments + 1):
-        theta = 2.0 * math.pi * i / segments
-        positions.append([radius * math.cos(theta), 0.0, radius * math.sin(theta)])
+        true_anomaly = 2.0 * math.pi * i / segments
+        radius = semi_latus_rectum / (1.0 + planet.orbit_eccentricity * math.cos(true_anomaly))
+        positions.append(orbit_to_world(planet.orbit_frame, radius, true_anomaly))
     return np.array(positions, dtype=np.float32)
 
 def generate_stars(count, radius=220.0):
@@ -443,17 +495,24 @@ class Camera:
 # ============================================================================
 class Planet:
     ROTATION_TIME_SCALE_DAYS_PER_SECOND = 8.0
+    ORBIT_DAY_SCALE = 60.0
 
-    def __init__(self, name, orbit_radius, size, color, period,
+    def __init__(self, name, orbit_radius, orbit_eccentricity, orbit_inclination_deg,
+                 orbit_ascending_node_deg, orbit_periapsis_deg, size, color, orbit_days,
+                 orbit_phase_deg,
                  axial_tilt_deg=0.0, rotation_period_days=1.0,
                  has_ring=False, ring_color=None, ring_inner=0, ring_outer=0,
                  texture_name=None):
         self.name = name
         self.orbit_radius = orbit_radius
+        self.orbit_eccentricity = orbit_eccentricity
+        self.orbit_inclination_deg = orbit_inclination_deg
+        self.orbit_ascending_node_deg = orbit_ascending_node_deg
+        self.orbit_periapsis_deg = orbit_periapsis_deg
         self.size = size
         self.color = color
-        self.period = period
-        self.angle = random.uniform(0, 360)
+        self.orbit_days = orbit_days
+        self.orbit_mean_anomaly_deg = orbit_phase_deg
         self.axial_tilt_deg = axial_tilt_deg
         self.rotation_period_days = rotation_period_days
         self.rotation_angle = random.uniform(0, 360)
@@ -462,23 +521,36 @@ class Planet:
         self.ring_inner = ring_inner
         self.ring_outer = ring_outer
         self.texture_name = texture_name or f"{name.lower()}.jpg"
+        self.orbit_frame = build_orbit_frame(
+            orbit_ascending_node_deg,
+            orbit_inclination_deg,
+            orbit_periapsis_deg,
+        )
 
     def update(self, dt, speed):
-        if self.period > 0:
-            angular_speed = 360.0 / (self.period * 60.0)
-            self.angle = (self.angle + angular_speed * dt * speed) % 360.0
+        if self.orbit_days > 0:
+            angular_speed = 360.0 / self.orbit_days
+            self.orbit_mean_anomaly_deg = (
+                self.orbit_mean_anomaly_deg + angular_speed * dt * speed * self.ORBIT_DAY_SCALE
+            ) % 360.0
 
         if abs(self.rotation_period_days) > 1e-6:
-            rotation_speed = 360.0 / (self.rotation_period_days * self.ROTATION_TIME_SCALE_DAYS_PER_SECOND)
+            rotation_speed = 360.0 / (abs(self.rotation_period_days) * self.ROTATION_TIME_SCALE_DAYS_PER_SECOND)
+            if self.rotation_period_days < 0:
+                rotation_speed = -rotation_speed
             self.rotation_angle = (self.rotation_angle + rotation_speed * dt * speed) % 360.0
 
     def get_position(self):
-        rad = math.radians(self.angle)
-        return np.array([
-            self.orbit_radius * math.cos(rad),
-            0.0,
-            self.orbit_radius * math.sin(rad)
-        ], dtype=np.float32)
+        mean_anomaly = deg_to_rad(self.orbit_mean_anomaly_deg)
+        eccentric_anomaly = solve_eccentric_anomaly(mean_anomaly, self.orbit_eccentricity)
+        cos_e = math.cos(eccentric_anomaly)
+        sin_e = math.sin(eccentric_anomaly)
+        radius = self.orbit_radius * (1.0 - self.orbit_eccentricity * cos_e)
+        true_anomaly = math.atan2(
+            math.sqrt(1.0 - self.orbit_eccentricity * self.orbit_eccentricity) * sin_e,
+            cos_e - self.orbit_eccentricity,
+        )
+        return orbit_to_world(self.orbit_frame, radius, true_anomaly)
 
     def get_model_matrix(self):
         pos = self.get_position()
@@ -496,23 +568,23 @@ class SolarSystem:
     def __init__(self):
         random.seed(42)
         self.planets = [
-            Planet("Mercury",  4.0,  0.15, (0.7, 0.7, 0.7),  0.24,
+            Planet("Mercury",  4.0, 0.2056, 7.00, 48.33, 29.12, 0.15, (0.7, 0.7, 0.7), 88.0, 10.0,
                    axial_tilt_deg=0.03, rotation_period_days=58.65),
-            Planet("Venus",    6.0,  0.30, (0.9, 0.7, 0.3),  0.62,
+            Planet("Venus",    5.8, 0.0068, 3.39, 76.68, 54.88, 0.30, (0.9, 0.7, 0.3), 225.0, 75.0,
                    axial_tilt_deg=177.36, rotation_period_days=-243.02),
-            Planet("Earth",    8.0,  0.32, (0.2, 0.5, 1.0),  1.0,
+            Planet("Earth",    8.0, 0.0167, 0.00, -11.26, 114.21, 0.32, (0.2, 0.5, 1.0), 365.0, 135.0,
                    axial_tilt_deg=23.44, rotation_period_days=0.997),
-            Planet("Mars",    10.0,  0.20, (0.9, 0.3, 0.2),  1.88,
+            Planet("Mars",    10.5, 0.0934, 1.85, 49.58, 286.50, 0.20, (0.9, 0.3, 0.2), 687.0, 195.0,
                    axial_tilt_deg=25.19, rotation_period_days=1.03),
-            Planet("Jupiter", 15.0,  0.90, (0.8, 0.6, 0.4), 11.86,
+            Planet("Jupiter", 14.5, 0.0489, 1.30, 100.46, 273.87, 0.90, (0.8, 0.6, 0.4), 4333.0, 250.0,
                    axial_tilt_deg=3.13, rotation_period_days=0.41),
-            Planet("Saturn",  20.0,  0.80, (0.9, 0.8, 0.5), 29.46,
+            Planet("Saturn",  19.0, 0.0565, 2.49, 113.67, 339.39, 0.80, (0.9, 0.8, 0.5), 10759.0, 305.0,
                    axial_tilt_deg=26.73, rotation_period_days=0.45,
                    has_ring=True, ring_color=(0.85, 0.75, 0.55),
                    ring_inner=1.0, ring_outer=1.6),
-            Planet("Uranus",  26.0,  0.50, (0.5, 0.8, 0.9), 84.01,
+            Planet("Uranus",  23.0, 0.0472, 0.77, 74.01, 96.73, 0.50, (0.5, 0.8, 0.9), 30687.0, 15.0,
                    axial_tilt_deg=97.77, rotation_period_days=-0.72),
-            Planet("Neptune", 32.0,  0.50, (0.2, 0.3, 0.9), 164.8,
+            Planet("Neptune", 27.5, 0.0086, 1.77, 131.78, 273.19, 0.50, (0.2, 0.3, 0.9), 60190.0, 100.0,
                    axial_tilt_deg=28.32, rotation_period_days=0.67),
         ]
 
@@ -567,7 +639,7 @@ class SolarSystem:
         # Orbit lines
         self.orbit_meshes = []
         for p in self.planets:
-            orbit_pos = create_orbit_line(p.orbit_radius, 128)
+            orbit_pos = create_orbit_path(p, 192)
             mesh = Mesh()
             mesh.primitive = GL_LINE_STRIP
             mesh.vertex_count = len(orbit_pos)
