@@ -107,6 +107,18 @@ const cameraForward = new Vector3();
 const cameraRight = new Vector3();
 const cameraUp = new Vector3(0, 1, 0);
 const cameraTarget = new Vector3();
+const moveForward = new Vector3();
+const moveRight = new Vector3();
+const lookDirection = new Vector3();
+
+function syncFreeLookAnglesFromDirection(direction: Vector3): void {
+  if (direction.lengthSq() <= 1e-6) {
+    return;
+  }
+  const normalized = direction.clone().normalize();
+  input.yawDeg = MathUtils.radToDeg(Math.atan2(normalized.z, normalized.x));
+  input.pitchDeg = MathUtils.radToDeg(Math.asin(MathUtils.clamp(normalized.y, -1.0, 1.0)));
+}
 
 const sunTexture = loader.load(SUN.textureUrl);
 sunTexture.colorSpace = SRGBColorSpace;
@@ -350,18 +362,37 @@ function applyCameraOrientation(): void {
 function updateCamera(deltaSeconds: number): void {
   applyCameraOrientation();
 
+  if (cameraLocked) {
+    lookDirection.subVectors(cameraTarget, camera.position);
+  } else {
+    lookDirection.copy(cameraForward);
+  }
+
+  moveForward.copy(lookDirection);
+  if (moveForward.lengthSq() > 1e-6) {
+    moveForward.normalize();
+  } else {
+    moveForward.set(0, 0, 0);
+  }
+  moveRight.crossVectors(moveForward, cameraUp);
+  if (moveRight.lengthSq() > 1e-6) {
+    moveRight.normalize();
+  } else {
+    moveRight.set(0, 0, 0);
+  }
+
   moveDirection.set(0, 0, 0);
   if (input.keys.has("KeyW")) {
-    moveDirection.add(cameraForward);
+    moveDirection.add(moveForward);
   }
   if (input.keys.has("KeyS")) {
-    moveDirection.sub(cameraForward);
+    moveDirection.sub(moveForward);
   }
   if (input.keys.has("KeyA")) {
-    moveDirection.sub(cameraRight);
+    moveDirection.sub(moveRight);
   }
   if (input.keys.has("KeyD")) {
-    moveDirection.add(cameraRight);
+    moveDirection.add(moveRight);
   }
   if (moveDirection.lengthSq() > 0.0) {
     moveDirection.normalize().multiplyScalar(24.0 * deltaSeconds);
@@ -498,6 +529,10 @@ window.addEventListener("keydown", (event) => {
       paused = !paused;
       return;
     case "KeyL":
+      if (cameraLocked) {
+        lookDirection.subVectors(cameraTarget, camera.position);
+        syncFreeLookAnglesFromDirection(lookDirection);
+      }
       cameraLocked = !cameraLocked;
       return;
     case "Equal":
