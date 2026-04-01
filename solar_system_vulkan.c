@@ -16,6 +16,10 @@
 #define M_PI 3.14159265358979323846
 #endif
 
+#ifndef VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME
+#define VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME "VK_KHR_portability_subset"
+#endif
+
 #define ARRAY_LEN(a) (sizeof(a) / sizeof((a)[0]))
 #define WINDOW_WIDTH 1200
 #define WINDOW_HEIGHT 800
@@ -145,8 +149,15 @@ typedef struct {
 } SwapchainSupportDetails;
 
 typedef struct {
+    bool supports_swapchain;
+    bool supports_portability_subset;
+} DeviceExtensionSupport;
+
+typedef struct {
     GLFWwindow *window;
     bool framebuffer_resized;
+    bool enable_portability_enumeration;
+    bool enable_portability_subset;
 
     VkInstance instance;
     VkSurfaceKHR surface;
@@ -204,11 +215,6 @@ typedef struct {
 } VulkanApp;
 
 static Camera *g_scroll_camera = NULL;
-
-static const char *k_device_extensions[] = {
-    VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-    "VK_KHR_portability_subset",
-};
 
 static float randf_range(float min_v, float max_v) {
     return min_v + (max_v - min_v) * ((float) rand() / (float) RAND_MAX);
@@ -849,6 +855,47 @@ static const char *target_name(const SolarSystem *ss, int target_index) {
     return "None";
 }
 
+static bool instance_supports_extension(const char *name) {
+    uint32_t count = 0;
+    vkEnumerateInstanceExtensionProperties(NULL, &count, NULL);
+    VkExtensionProperties *available = NULL;
+    if (count > 0) {
+        available = (VkExtensionProperties *) malloc(count * sizeof(VkExtensionProperties));
+        vkEnumerateInstanceExtensionProperties(NULL, &count, available);
+    }
+    bool found = false;
+    for (uint32_t i = 0; i < count; ++i) {
+        if (strcmp(available[i].extensionName, name) == 0) {
+            found = true;
+            break;
+        }
+    }
+    free(available);
+    return found;
+}
+
+static DeviceExtensionSupport query_device_extension_support(VkPhysicalDevice device) {
+    DeviceExtensionSupport support = {0};
+    uint32_t count = 0;
+    vkEnumerateDeviceExtensionProperties(device, NULL, &count, NULL);
+    VkExtensionProperties *available = NULL;
+    if (count > 0) {
+        available = (VkExtensionProperties *) malloc(count * sizeof(VkExtensionProperties));
+        vkEnumerateDeviceExtensionProperties(device, NULL, &count, available);
+    }
+
+    for (uint32_t i = 0; i < count; ++i) {
+        if (strcmp(available[i].extensionName, VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0) {
+            support.supports_swapchain = true;
+        } else if (strcmp(available[i].extensionName, VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME) == 0) {
+            support.supports_portability_subset = true;
+        }
+    }
+
+    free(available);
+    return support;
+}
+
 static QueueFamilyIndices find_queue_families(VkPhysicalDevice device, VkSurfaceKHR surface) {
     QueueFamilyIndices indices = {0};
     uint32_t count = 0;
@@ -898,22 +945,8 @@ static void free_swapchain_support(SwapchainSupportDetails *details) {
 }
 
 static bool device_supports_extensions(VkPhysicalDevice device) {
-    uint32_t count = 0;
-    vkEnumerateDeviceExtensionProperties(device, NULL, &count, NULL);
-    VkExtensionProperties *available = (VkExtensionProperties *) malloc(count * sizeof(VkExtensionProperties));
-    vkEnumerateDeviceExtensionProperties(device, NULL, &count, available);
-
-    size_t needed = ARRAY_LEN(k_device_extensions);
-    for (uint32_t i = 0; i < count; ++i) {
-        for (size_t j = 0; j < ARRAY_LEN(k_device_extensions); ++j) {
-            if (strcmp(available[i].extensionName, k_device_extensions[j]) == 0) {
-                --needed;
-                break;
-            }
-        }
-    }
-    free(available);
-    return needed == 0;
+    DeviceExtensionSupport support = query_device_extension_support(device);
+    return support.supports_swapchain;
 }
 
 static bool is_device_suitable(VkPhysicalDevice device, VkSurfaceKHR surface) {
@@ -925,6 +958,21 @@ static bool is_device_suitable(VkPhysicalDevice device, VkSurfaceKHR surface) {
     bool ok = support.format_count > 0 && support.present_mode_count > 0;
     free_swapchain_support(&support);
     return ok;
+}
+
+static VkCompositeAlphaFlagBitsKHR choose_composite_alpha(const VkSurfaceCapabilitiesKHR *capabilities) {
+    const VkCompositeAlphaFlagBitsKHR preferred_modes[] = {
+        VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+        VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR,
+        VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR,
+        VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR,
+    };
+    for (size_t i = 0; i < ARRAY_LEN(preferred_modes); ++i) {
+        if (capabilities->supportedCompositeAlpha & preferred_modes[i]) {
+            return preferred_modes[i];
+        }
+    }
+    return VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
 }
 
 static uint32_t find_memory_type(VulkanApp *app, uint32_t type_filter, VkMemoryPropertyFlags properties) {
@@ -1379,20 +1427,23 @@ static void create_instance(VulkanApp *app) {
 
     uint32_t extension_count = 0;
     const char **extensions = glfwGetRequiredInstanceExtensions(&extension_count);
+    app->enable_portability_enumeration =
+        instance_supports_extension(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
 
-    /* MoltenVK on macOS requires portability enumeration */
-    const char *portability_ext = VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
+    const uint32_t extra_extensions = app->enable_portability_enumeration ? 1u : 0u;
     const char **all_extensions = (const char **) malloc(
-        (extension_count + 1) * sizeof(const char *));
+        (extension_count + extra_extensions) * sizeof(const char *));
     memcpy(all_extensions, extensions, extension_count * sizeof(const char *));
-    all_extensions[extension_count++] = portability_ext;
+    if (app->enable_portability_enumeration) {
+        all_extensions[extension_count++] = VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
+    }
 
     VkInstanceCreateInfo create_info = {
         .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
         .pApplicationInfo = &app_info,
         .enabledExtensionCount = extension_count,
         .ppEnabledExtensionNames = all_extensions,
-        .flags = VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR,
+        .flags = app->enable_portability_enumeration ? VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR : 0,
     };
 
     vk_check(vkCreateInstance(&create_info, NULL, &app->instance), "vkCreateInstance");
@@ -1429,9 +1480,14 @@ static void pick_physical_device(VulkanApp *app) {
            VK_VERSION_MINOR(props.apiVersion), VK_VERSION_PATCH(props.apiVersion));
 
     QueueFamilyIndices indices = find_queue_families(app->physical_device, app->surface);
+    DeviceExtensionSupport extension_support = query_device_extension_support(app->physical_device);
+    app->enable_portability_subset = extension_support.supports_portability_subset;
     printf("Queue families: graphics=%u present=%u %s\n",
            indices.graphics_family, indices.present_family,
            indices.graphics_family == indices.present_family ? "(same queue)" : "(different queues!)");
+    printf("Device extensions: swapchain=%s portability_subset=%s\n",
+           extension_support.supports_swapchain ? "yes" : "no",
+           extension_support.supports_portability_subset ? "yes" : "no");
 }
 
 static void create_logical_device(VulkanApp *app) {
@@ -1458,6 +1514,12 @@ static void create_logical_device(VulkanApp *app) {
         };
     }
 
+    const char *device_extensions[2] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME};
+    uint32_t device_extension_count = 1;
+    if (app->enable_portability_subset) {
+        device_extension_count = 2;
+    }
+
     VkPhysicalDeviceFeatures features = {0};
     features.samplerAnisotropy = VK_FALSE;
 
@@ -1466,8 +1528,8 @@ static void create_logical_device(VulkanApp *app) {
         .queueCreateInfoCount = queue_info_count,
         .pQueueCreateInfos = queue_infos,
         .pEnabledFeatures = &features,
-        .enabledExtensionCount = (uint32_t) ARRAY_LEN(k_device_extensions),
-        .ppEnabledExtensionNames = k_device_extensions,
+        .enabledExtensionCount = device_extension_count,
+        .ppEnabledExtensionNames = device_extensions,
     };
 
     vk_check(vkCreateDevice(app->physical_device, &create_info, NULL, &app->device), "vkCreateDevice");
@@ -1896,7 +1958,7 @@ static void create_swapchain(VulkanApp *app) {
         .imageArrayLayers = 1,
         .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
         .preTransform = support.capabilities.currentTransform,
-        .compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+        .compositeAlpha = choose_composite_alpha(&support.capabilities),
         .presentMode = present_mode,
         .clipped = VK_TRUE,
     };
