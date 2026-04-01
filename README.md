@@ -278,7 +278,7 @@ This repository is intentionally labeled as AI-generated. That means:
 
 ### License
 
-This project is released under the MIT License. See [LICENSE](/home/besto/tmp/LICENSE).
+This project is released under the MIT License. See [LICENSE](LICENSE).
 
 ## 中文
 
@@ -473,4 +473,4 @@ C/OpenGL 版本支持输出最终帧：
 
 ### 许可证
 
-本项目采用 MIT License，详见 [LICENSE](/home/besto/tmp/LICENSE)。
+本项目采用 MIT License，详见 [LICENSE](LICENSE)。
