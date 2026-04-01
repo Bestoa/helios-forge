@@ -5,7 +5,7 @@
 > AI 生成项目：本仓库由 AI 辅助生成，公开发布、继续开发或教学使用前建议人工审查。
 
 ![Language](https://img.shields.io/badge/language-C11%20%7C%20Python-blue)
-![Graphics](https://img.shields.io/badge/rendering-OpenGL%20%7C%20Vulkan-orange)
+![Graphics](https://img.shields.io/badge/rendering-OpenGL%20%7C%20Vulkan%20%7C%20Metal-orange)
 ![Status](https://img.shields.io/badge/status-playground-brightgreen)
 ![AI Generated](https://img.shields.io/badge/origin-AI%20generated-black)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -45,10 +45,11 @@ Why this name:
 
 ### Overview
 
-This repository currently contains three implementations of the same solar-system scene:
+This repository currently contains four implementations of the same solar-system scene:
 
 - `solar_system_modern`: C + OpenGL
 - `solar_system_vulkan`: C + Vulkan
+- `solar_system_metal`: Objective-C + Metal (macOS)
 - `solar_system_modern.py`: Python + Pygame + PyOpenGL reference implementation
 - `web/`: TypeScript + Vite + Three.js browser implementation
 
@@ -81,6 +82,7 @@ This project is useful for learning and experimentation around:
 ├── LICENSE
 ├── solar_system_modern.c
 ├── solar_system_vulkan.c
+├── solar_system_metal.m
 ├── solar_system_modern.py
 ├── shaders/
 ├── assets/textures/
@@ -92,6 +94,7 @@ This project is useful for learning and experimentation around:
 - C11
 - OpenGL 3.3 Core + GLEW + GLFW
 - Vulkan + GLFW
+- Metal + Cocoa + CAMetalLayer
 - GLSL
 - Python 3
 - Pygame
@@ -187,6 +190,12 @@ Build Vulkan only:
 make solar_system_vulkan
 ```
 
+Build Metal only on macOS:
+
+```bash
+make solar_system_metal
+```
+
 Clean binaries and compiled Vulkan shaders:
 
 ```bash
@@ -205,6 +214,12 @@ Vulkan version:
 
 ```bash
 ./solar_system_vulkan
+```
+
+Metal version on macOS:
+
+```bash
+./solar_system_metal
 ```
 
 Python version:
