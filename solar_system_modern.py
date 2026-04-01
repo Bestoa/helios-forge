@@ -812,6 +812,24 @@ def create_opengl_window(width, height):
 # ============================================================================
 # Main
 # ============================================================================
+def speed_step_up(speed: float) -> float:
+    if speed < 1.0:
+        return min(1.0, round(speed + 0.1, 1))
+    if speed < 10.0:
+        return min(10.0, speed + 0.5)
+    return min(50.0, speed + 1.0)
+
+
+def speed_step_down(speed: float) -> float:
+    if speed <= 0.1:
+        return 0.1
+    if speed <= 1.0:
+        return max(0.1, round(speed - 0.1, 1))
+    if speed <= 10.0:
+        return max(1.0, speed - 0.5)
+    return max(10.0, speed - 1.0)
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Render the solar system with optional frame capture.")
     parser.add_argument("--frame-output", type=Path, help="Write the final rendered frame to a PNG file.")
@@ -897,9 +915,9 @@ def main():
                 elif K_1 <= event.key <= K_8:
                     target_index = event.key - K_0
                 elif event.key in (K_PLUS, K_EQUALS, K_KP_PLUS):
-                    speed = min(50.0, speed + 0.5)
+                    speed = speed_step_up(speed)
                 elif event.key in (K_MINUS, K_KP_MINUS):
-                    speed = max(0.1, speed - 0.5)
+                    speed = speed_step_down(speed)
             camera.handle_event(event)
 
         keys = pygame.key.get_pressed()

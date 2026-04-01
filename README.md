@@ -50,6 +50,7 @@ This repository currently contains three implementations of the same solar-syste
 - `solar_system_modern`: C + OpenGL
 - `solar_system_vulkan`: C + Vulkan
 - `solar_system_modern.py`: Python + Pygame + PyOpenGL reference implementation
+- `web/`: TypeScript + Vite + Three.js browser implementation
 
 The scene includes:
 
@@ -97,6 +98,9 @@ This project is useful for learning and experimentation around:
 - PyOpenGL
 - NumPy
 - `stb_image` / `stb_image_write`
+- TypeScript
+- Vite
+- Three.js
 
 ### Requirements
 
@@ -122,6 +126,13 @@ Install Python dependencies:
 
 ```bash
 python3 -m pip install -r requirements.txt
+```
+
+Install Web dependencies:
+
+```bash
+cd web
+npm install
 ```
 
 ### macOS Vulkan Notes
@@ -202,6 +213,13 @@ Python version:
 python3 solar_system_modern.py
 ```
 
+Web version:
+
+```bash
+cd web
+npm run dev
+```
+
 ### OpenGL Frame Capture
 
 The C/OpenGL build supports frame capture:
@@ -223,6 +241,17 @@ This writes the final rendered frame to a PNG file.
 - `+` / `-`: adjust simulation speed
 - `Space`: pause / resume
 - `Esc`: quit
+
+Web version controls:
+
+- `Mouse drag`: rotate camera
+- `Mouse wheel`: zoom
+- `W`, `A`, `S`, `D`: move camera
+- `L`: toggle target lock
+- `0`: focus Sun
+- `1` to `8`: focus planets
+- `+` / `-`: adjust simulation speed
+- `Space`: pause / resume
 
 ### AI Disclosure
 

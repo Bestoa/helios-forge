@@ -1,4 +1,6 @@
 __pycache__/
 solar_system_modern
 solar_system_vulkan
+web/node_modules/
+web/dist/
 shaders/*.spv

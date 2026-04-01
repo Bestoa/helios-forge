@@ -667,6 +667,35 @@ static void solar_system_update(SolarSystem *ss, float dt, float speed) {
     ss->sun_rotation_angle_deg = fmodf(ss->sun_rotation_angle_deg + sun_speed * dt * speed, 360.0f);
 }
 
+static float speed_step_up(float speed) {
+    if (speed < 1.0f) {
+        float stepped = roundf((speed + 0.1f) * 10.0f) / 10.0f;
+        return stepped > 1.0f ? 1.0f : stepped;
+    }
+    if (speed < 10.0f) {
+        float stepped = speed + 0.5f;
+        return stepped > 10.0f ? 10.0f : stepped;
+    }
+    float stepped = speed + 1.0f;
+    return stepped > 50.0f ? 50.0f : stepped;
+}
+
+static float speed_step_down(float speed) {
+    if (speed <= 0.1f) {
+        return 0.1f;
+    }
+    if (speed <= 1.0f) {
+        float stepped = roundf((speed - 0.1f) * 10.0f) / 10.0f;
+        return stepped < 0.1f ? 0.1f : stepped;
+    }
+    if (speed <= 10.0f) {
+        float stepped = speed - 0.5f;
+        return stepped < 1.0f ? 1.0f : stepped;
+    }
+    float stepped = speed - 1.0f;
+    return stepped < 10.0f ? 10.0f : stepped;
+}
+
 static void camera_update_view(Camera *camera) {
     Vec3 world_up = vec3(0.0f, 1.0f, 0.0f);
     float pitch = camera->pitch_deg * (float) M_PI / 180.0f;
@@ -2632,16 +2661,10 @@ int main(void) {
             camera.zoom_delta = 0.0f;
         }
         if (plus_pressed && !prev_plus) {
-            speed += 0.5f;
-            if (speed > 50.0f) {
-                speed = 50.0f;
-            }
+            speed = speed_step_up(speed);
         }
         if (minus_pressed && !prev_minus) {
-            speed -= 0.5f;
-            if (speed < 0.1f) {
-                speed = 0.1f;
-            }
+            speed = speed_step_down(speed);
         }
         for (int i = 0; i <= 9; ++i) {
             int key = i == 0 ? GLFW_KEY_0 : (GLFW_KEY_0 + i);
